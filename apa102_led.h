@@ -2,6 +2,9 @@
 #include <Arduino.h>
 #include "config.h"
 
+// Physical clockwise mapping of APA102 LEDs around T-Embed rotary knob
+const uint8_t LED_MAP[NUM_LEDS] = { 2, 1, 0, 6, 5, 4, 3 };
+
 class APA102Controller {
 private:
   uint32_t currentColors[NUM_LEDS];
@@ -58,9 +61,11 @@ public:
     // 7 LED frames: 0xE0 | brightness, B, G, R
     uint8_t header = 0xE0 | (globalBrightness & 0x1F);
     for (int i = 0; i < NUM_LEDS; i++) {
-      uint8_t r = (currentColors[i] >> 16) & 0xFF;
-      uint8_t g = (currentColors[i] >> 8) & 0xFF;
-      uint8_t b = currentColors[i] & 0xFF;
+      // Map logical LED position to physical LED order around the knob
+      uint8_t physicalIdx = LED_MAP[i];
+      uint8_t r = (currentColors[physicalIdx] >> 16) & 0xFF;
+      uint8_t g = (currentColors[physicalIdx] >> 8) & 0xFF;
+      uint8_t b = currentColors[physicalIdx] & 0xFF;
       sendByte(header);
       sendByte(b);
       sendByte(g);

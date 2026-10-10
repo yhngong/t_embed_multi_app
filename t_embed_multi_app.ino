@@ -1,5 +1,3 @@
-#define LILYGO_LGFX_USE_T_EMBED
-#include <LilyGo_LovyanGFX.h>
 #include <time.h>
 #include "config.h"
 #include "apa102_led.h"
@@ -13,7 +11,8 @@
 #include "app_system.h"
 
 // Hardware instances
-LilyGo_T_Embed display;
+// LGFX_TEmbed incorporates the 35px offset correction and rotation = 3 (wheel on right)
+LGFX_TEmbed display;
 LGFX_Sprite canvas(&display);
 InputManager inputs;
 APA102Controller ledBar;
@@ -64,6 +63,8 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n=================================");
   Serial.println("  LilyGO T-Embed Multi-App OS");
+  Serial.println("  Orientation: Right-Hand Wheel (Rot 3)");
+  Serial.println("  ST7789 Offset: 35px corrected");
   Serial.println("=================================");
 
   // Step 3: Initialize APA102 DotStar LEDs
@@ -75,7 +76,8 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(PIN_ENCODE_B), onEncoderChange, CHANGE);
 
   // Step 5: Initialize ST7789 Display & Sprite Buffer
-  display.begin(1, 230); // Landscape orientation (320x170), brightness 230
+  // rotation = 3 places rotary wheel on the right side for right-handed thumb operation!
+  display.begin(3, 230);
   canvas.setColorDepth(16);
   canvas.createSprite(SCREEN_WIDTH, SCREEN_HEIGHT);
 
@@ -151,7 +153,7 @@ void loop() {
     }
   }
 
-  // Push frame buffer to display
+  // Push frame buffer to display (no margin, fills entire 320x170 screen!)
   canvas.pushSprite(0, 0);
 
   // Target ~50-60 FPS
