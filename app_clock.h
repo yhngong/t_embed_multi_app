@@ -1,6 +1,7 @@
 #pragma once
 #include <LilyGo_LovyanGFX.h>
 #include <WiFi.h>
+#include <Preferences.h>
 #include <time.h>
 #include "config.h"
 #include "input.h"
@@ -31,12 +32,12 @@ private:
   uint32_t lastTickTime;
 
 public:
-  AppClock() : zoneIndex(0), isSyncing(false), syncStatus("NTP Idle"), lastTickTime(0) {}
+  AppClock() : zoneIndex(0), isSyncing(false), syncStatus("RTC Active"), lastTickTime(0) {}
 
   void begin() {
     zoneIndex = 0;
     isSyncing = false;
-    syncStatus = "NTP Ready";
+    syncStatus = "RTC (SF Bay Area)";
     setenv("TZ", WORLD_ZONES[zoneIndex].tzConfig, 1);
     tzset();
     ledBar.setBrightness(3);
@@ -48,13 +49,21 @@ public:
     isSyncing = true;
     syncStatus = "Scanning Wi-Fi...";
 
-    // If connected or connect
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(); // Uses stored credentials if available
+    Preferences netPrefs;
+    netPrefs.begin("wifi_cfg", true);
+    String ssid = netPrefs.getString("ssid", "");
+    String pass = netPrefs.getString("pass", "");
+    netPrefs.end();
 
-    // Wait up to 3 seconds
+    WiFi.mode(WIFI_STA);
+    if (ssid.length() > 0) {
+      WiFi.begin(ssid.c_str(), pass.c_str());
+    } else {
+      WiFi.begin();
+    }
+
     uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 3000) {
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 3500) {
       delay(100);
     }
 
@@ -66,8 +75,8 @@ public:
       syncStatus = "NTP Synced OK!";
       ledBar.flash(0x00FF88, 10);
     } else {
-      syncStatus = "No Saved Wi-Fi AP";
-      ledBar.flash(0xFF3300, 8);
+      syncStatus = "RTC Active (No Wi-Fi)";
+      ledBar.flash(0xFF8800, 8);
     }
     isSyncing = false;
   }
@@ -172,12 +181,12 @@ public:
 
     canvas->setTextDatum(textdatum_t::top_left);
     canvas->setTextColor(0x07FF, 0x0822);
-    canvas->drawString(timeBuf, rx + 4, 44, &fonts::Font4);
+    canvas->drawString(timeBuf, rx + 4, 42, &fonts::Font4);
 
     canvas->setTextColor(0xFD00, 0x0822);
-    canvas->drawString(ampm, rx + 144, 46, &fonts::Font2);
+    canvas->drawString(ampm, rx + 144, 44, &fonts::Font2);
 
-    // Date String (No overlap: nicely positioned on line 80)
+    // Date String (Properly positioned at y=76 with ample space)
     char dateBuf[32];
     const char* days[7] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
     const char* months[12] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
@@ -185,11 +194,11 @@ public:
              days[tInfo.tm_wday], months[tInfo.tm_mon], tInfo.tm_mday, tInfo.tm_year + 1900);
 
     canvas->setTextColor(0xFFFF, 0x0822);
-    canvas->drawString(dateBuf, rx + 4, 82, &fonts::Font2);
+    canvas->drawString(dateBuf, rx + 4, 76, &fonts::Font2);
 
-    // NTP Status
+    // Status / Timezone info
     canvas->setTextColor(0x7BEF, 0x0822);
-    canvas->drawString("Status: " + syncStatus, rx + 4, 108, &fonts::Font0);
+    canvas->drawString("Status: " + syncStatus, rx + 4, 102, &fonts::Font0);
 
     // Bottom Navigation Bar
     canvas->drawFastHLine(10, 144, 300, 0x18C5);

@@ -1,4 +1,5 @@
 #include <time.h>
+#include <sys/time.h>
 #include "config.h"
 #include "apa102_led.h"
 #include "input.h"
@@ -53,6 +54,40 @@ String getStatusTime() {
   return String(buf);
 }
 
+// Initialize system RTC clock from compiler build timestamp
+void initSystemTimeFromBuild() {
+  struct tm t = {0};
+  const char* months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+  char s_month[5];
+  int day = 1, year = 2026, hour = 0, min = 0, sec = 0;
+
+  sscanf(__DATE__, "%s %d %d", s_month, &day, &year);
+  sscanf(__TIME__, "%d:%d:%d", &hour, &min, &sec);
+
+  t.tm_year = year - 1900;
+  t.tm_mday = day;
+  t.tm_hour = hour;
+  t.tm_min = min;
+  t.tm_sec = sec;
+  t.tm_isdst = -1; // Auto DST for Pacific Time
+  for (int m = 0; m < 12; m++) {
+    if (strncmp(s_month, months[m], 3) == 0) {
+      t.tm_mon = m;
+      break;
+    }
+  }
+
+  // Pre-configure Pacific Timezone (San Francisco Bay Area)
+  setenv("TZ", "PST8PDT,M3.2.0,M11.1.0", 1);
+  tzset();
+
+  time_t buildEpoch = mktime(&t);
+  struct timeval tv = { .tv_sec = buildEpoch, .tv_usec = 0 };
+  settimeofday(&tv, nullptr);
+
+  Serial.printf("System time initialized from build: %s %s -> Epoch: %ld\n", __DATE__, __TIME__, (long)buildEpoch);
+}
+
 void setup() {
   // Step 1: Turn on peripheral power rail
   pinMode(PIN_POWER_ON, OUTPUT);
@@ -76,14 +111,12 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(PIN_ENCODE_B), onEncoderChange, CHANGE);
 
   // Step 5: Initialize ST7789 Display & Sprite Buffer
-  // rotation = 3 places rotary wheel on the right side for right-handed thumb operation!
   display.begin(3, 230);
   canvas.setColorDepth(16);
   canvas.createSprite(SCREEN_WIDTH, SCREEN_HEIGHT);
 
-  // Step 6: Default Timezone: San Francisco Bay Area (Pacific Time)
-  setenv("TZ", "PST8PDT,M3.2.0,M11.1.0", 1);
-  tzset();
+  // Step 6: Initialize System Clock (Local San Francisco Bay Area / Pacific Time)
+  initSystemTimeFromBuild();
 
   // Step 7: Launch into Home Launcher
   launcher.begin();
@@ -148,6 +181,8 @@ void loop() {
     // Return to launcher if app exited (e.g. hold knob)
     if (!appActive) {
       currentApp = APP_LAUNCHER;
+      setenv("TZ", "PST8PDT,M3.2.0,M11.1.0", 1);
+      tzset();
       launcher.begin();
       inputs.clearPending();
     }

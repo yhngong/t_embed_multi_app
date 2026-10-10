@@ -19,21 +19,27 @@ private:
 
   Point body[128];
   int length;
-  int dir; // 0: Up, 1: Right, 2: Down, 3: Left
+  int currentDir; // 0: Up, 1: Right, 2: Down, 3: Left
+  int queuedDir;  // Direction buffered for next step
+  bool turnBuffered;
+
   Point food;
   Point bonusStar;
   uint32_t bonusStarExpire;
   int score;
   int highScore;
+  bool started;
   bool isGameOver;
+  uint32_t gameOverTime;
   uint32_t lastStepTime;
   Preferences prefs;
 
   void spawnFood() {
     bool ok = false;
-    while (!ok) {
-      food.x = random(0, GRID_W);
-      food.y = random(0, GRID_H);
+    int attempts = 0;
+    while (!ok && attempts < 200) {
+      food.x = random(1, GRID_W - 1);
+      food.y = random(1, GRID_H - 1);
       ok = true;
       for (int i = 0; i < length; i++) {
         if (body[i].x == food.x && body[i].y == food.y) {
@@ -41,81 +47,121 @@ private:
           break;
         }
       }
+      attempts++;
     }
   }
 
   void spawnBonusStar() {
-    bonusStar.x = random(0, GRID_W);
-    bonusStar.y = random(0, GRID_H);
-    bonusStarExpire = millis() + 7000;
+    bonusStar.x = random(1, GRID_W - 1);
+    bonusStar.y = random(1, GRID_H - 1);
+    bonusStarExpire = millis() + 8000;
   }
 
   void resetGame() {
     length = 4;
-    dir = 1; // Start moving right
-    body[0] = { 8, 7 };
-    body[1] = { 7, 7 };
-    body[2] = { 6, 7 };
-    body[3] = { 5, 7 };
+    currentDir = 1; // Moving Right
+    queuedDir = 1;
+    turnBuffered = false;
+
+    // Center snake safely away from walls
+    body[0] = { 10, 7 };
+    body[1] = { 9, 7 };
+    body[2] = { 8, 7 };
+    body[3] = { 7, 7 };
+
     score = 0;
+    started = false;
     isGameOver = false;
+    gameOverTime = 0;
     lastStepTime = millis();
     bonusStarExpire = 0;
     spawnFood();
   }
 
+  // Prevent 180-degree reversals
+  bool isOpposite(int d1, int d2) {
+    return (d1 == 0 && d2 == 2) || (d1 == 2 && d2 == 0) ||
+           (d1 == 1 && d2 == 3) || (d1 == 3 && d2 == 1);
+  }
+
 public:
-  AppSnake() : length(4), dir(1), score(0), highScore(0), isGameOver(false), lastStepTime(0), bonusStarExpire(0) {}
+  AppSnake() : length(4), currentDir(1), queuedDir(1), turnBuffered(false), score(0), highScore(0), started(false), isGameOver(false), gameOverTime(0), lastStepTime(0), bonusStarExpire(0) {}
 
   void begin() {
     prefs.begin("snake_te", false);
     highScore = prefs.getInt("hiscore", 0);
+    inputs.clearPending();
     resetGame();
     ledBar.setAll(0x003311);
     ledBar.show();
   }
 
   bool update() {
+    // Universal HOME gesture (Hold Knob)
     if (inputs.wasLongPressed()) {
       prefs.putInt("hiscore", highScore);
       prefs.end();
       return false; // Exit to launcher
     }
 
-    if (isGameOver) {
+    // Waiting to start game
+    if (!started) {
       if (inputs.wasClicked()) {
+        started = true;
+        lastStepTime = millis();
+        ledBar.flash(0x00FF66, 8);
+      }
+      return true;
+    }
+
+    // Game Over state with debounced restart
+    if (isGameOver) {
+      if (inputs.wasClicked() && (millis() - gameOverTime > 400)) {
         resetGame();
       }
       return true;
     }
 
-    // Rotary Wheel Steering: CW = Turn Right (+1), CCW = Turn Left (-1)
+    // Rotary Wheel Steering:
+    // Buffer only ONE 90-degree turn per game step to prevent 180-degree self-reversals
     int delta = inputs.getDelta();
-    if (delta > 0) {
-      dir = (dir + 1) % 4; // Turn 90 deg clockwise
-      ledBar.flash(0x00FF66, 5);
-    } else if (delta < 0) {
-      dir = (dir + 3) % 4; // Turn 90 deg counter-clockwise
-      ledBar.flash(0x00FF66, 5);
+    if (delta != 0 && !turnBuffered) {
+      int desiredDir = currentDir;
+      if (delta > 0) {
+        desiredDir = (currentDir + 1) % 4; // 90° Clockwise
+      } else {
+        desiredDir = (currentDir + 3) % 4; // 90° Counter-Clockwise
+      }
+
+      if (!isOpposite(desiredDir, currentDir)) {
+        queuedDir = desiredDir;
+        turnBuffered = true;
+        ledBar.flash(0x00FF66, 4);
+      }
     }
 
-    // Speed calculation: speeds up slightly as snake grows
-    uint32_t stepInterval = max(60, 150 - (length * 2));
-    if (inputs.isKeyDown()) stepInterval /= 2; // Knob held boosts speed!
+    // Speed calculation
+    uint32_t stepInterval = max(80, 160 - (length * 2));
+    if (inputs.isKeyDown()) stepInterval /= 2; // Hold knob to sprint
 
     if (millis() - lastStepTime >= stepInterval) {
       lastStepTime = millis();
 
+      // Apply buffered turn
+      currentDir = queuedDir;
+      turnBuffered = false; // Ready for next turn
+
       // Next head position
       Point nextHead = body[0];
-      if (dir == 0) nextHead.y--;
-      else if (dir == 1) nextHead.x++;
-      else if (dir == 2) nextHead.y++;
-      else if (dir == 3) nextHead.x--;
+      if (currentDir == 0) nextHead.y--;
+      else if (currentDir == 1) nextHead.x++;
+      else if (currentDir == 2) nextHead.y++;
+      else if (currentDir == 3) nextHead.x--;
 
       // Wall collision
       if (nextHead.x < 0 || nextHead.x >= GRID_W || nextHead.y < 0 || nextHead.y >= GRID_H) {
         isGameOver = true;
+        gameOverTime = millis();
         ledBar.flash(0xFF0000, 16);
         if (score > highScore) {
           highScore = score;
@@ -124,10 +170,11 @@ public:
         return true;
       }
 
-      // Self collision
-      for (int i = 0; i < length - 1; i++) {
+      // Self collision: check body segments from neck (1) to tail (length - 1)
+      for (int i = 1; i < length; i++) {
         if (body[i].x == nextHead.x && body[i].y == nextHead.y) {
           isGameOver = true;
+          gameOverTime = millis();
           ledBar.flash(0xFF0000, 16);
           if (score > highScore) {
             highScore = score;
@@ -137,11 +184,11 @@ public:
         }
       }
 
-      // Check eating food
+      // Check eating food / bonus
       bool ateFood = (nextHead.x == food.x && nextHead.y == food.y);
       bool ateBonus = (bonusStarExpire > millis() && nextHead.x == bonusStar.x && nextHead.y == bonusStar.y);
 
-      // Move body forward
+      // Move body segments forward
       if (ateFood || ateBonus) {
         if (length < 127) length++;
       }
@@ -156,7 +203,6 @@ public:
         ledBar.flash(0x00FF00, 10);
         if (score > highScore) highScore = score;
 
-        // 25% chance to spawn bonus star
         if (random(0, 4) == 0 && bonusStarExpire < millis()) {
           spawnBonusStar();
         }
@@ -213,9 +259,9 @@ public:
         canvas->fillRoundRect(bx, by, CELL_SIZE, CELL_SIZE, 3, 0x07E0);
         int eyeX1 = bx + 2, eyeY1 = by + 2;
         int eyeX2 = bx + 6, eyeY2 = by + 2;
-        if (dir == 1) { eyeX1 = bx + 6; eyeX2 = bx + 6; eyeY1 = by + 2; eyeY2 = by + 6; }
-        else if (dir == 2) { eyeY1 = by + 6; eyeY2 = by + 6; }
-        else if (dir == 3) { eyeX1 = bx + 2; eyeX2 = bx + 2; eyeY1 = by + 2; eyeY2 = by + 6; }
+        if (currentDir == 1) { eyeX1 = bx + 6; eyeX2 = bx + 6; eyeY1 = by + 2; eyeY2 = by + 6; }
+        else if (currentDir == 2) { eyeY1 = by + 6; eyeY2 = by + 6; }
+        else if (currentDir == 3) { eyeX1 = bx + 2; eyeX2 = bx + 2; eyeY1 = by + 2; eyeY2 = by + 6; }
         canvas->drawPixel(eyeX1, eyeY1, 0x0000);
         canvas->drawPixel(eyeX2, eyeY2, 0x0000);
       } else {
@@ -230,8 +276,18 @@ public:
     canvas->setTextColor(0x7BEF, 0x0821);
     canvas->drawString("Turn Wheel: Rotate Head   *   Hold Knob: Home", 160, 168, &fonts::Font0);
 
-    // Game Over Overlay
-    if (isGameOver) {
+    // Ready / Start Overlay
+    if (!started) {
+      canvas->fillRoundRect(48, 48, 224, 66, 8, 0x0000);
+      canvas->drawRoundRect(48, 48, 224, 66, 8, 0x07E0);
+      canvas->setTextDatum(textdatum_t::middle_center);
+      canvas->setTextColor(0x07E0, 0x0000);
+      canvas->drawString("RETRO SNAKE", 160, 64, &fonts::Font4);
+      canvas->setTextColor(0xFFFF, 0x0000);
+      canvas->drawString("PRESS KNOB TO START", 160, 88, &fonts::Font2);
+      canvas->setTextColor(0x7BEF, 0x0000);
+      canvas->drawString("Turn Wheel: CW/CCW Turn", 160, 102, &fonts::Font0);
+    } else if (isGameOver) {
       canvas->fillRoundRect(50, 48, 220, 68, 8, 0x0000);
       canvas->drawRoundRect(50, 48, 220, 68, 8, 0xF800);
       canvas->setTextDatum(textdatum_t::middle_center);
